@@ -1,0 +1,164 @@
+---
+description: FastAPI backend conventions
+globs: lexo/backend/**
+alwaysApply: false
+---
+
+# Stack
+
+Python + FastAPI. Dependency management via plain `pip` + `venv` — no poetry/uv. Deps pinned in `lexo/backend/requirements.txt`. DB: SQLite via SQLModel by default (zero setup, file-based, fast enough for a hackathon demo). Swap the connection string later if a real DB is needed — the code pattern below doesn't change.
+
+Setup:
+```
+python -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+`requirements.txt` baseline:
+```
+fastapi
+uvicorn[standard]
+pydantic-settings
+sqlmodel
+python-dotenv
+```
+
+# Project structure
+
+```
+backend/
+  app/
+    main.py                # FastAPI() instance, CORS, router includes, startup/shutdown
+    core/
+      config.py             # Settings via pydantic-settings, reads .env
+      db.py                  # engine + session dependency
+    routers/                  # one file per resource
+      items.py
+    schemas/                    # Pydantic request/response models (API-facing)
+      item.py
+    models/                       # SQLModel table models (DB-facing)
+      item.py
+    services/                       # business logic, kept out of routers
+      item_service.py
+  requirements.txt
+  .env
+  .env.example
+```
+
+Keep `schemas/` (what the API returns) separate from `models/` (what's in the DB) even if they look identical at first — they diverge fast once you add computed fields or hide internal columns.
+
+# core/config.py pattern
+
+```python
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    database_url: str = "sqlite:///./app.db"
+    cors_origins: list[str] = ["http://localhost:3000"]
+
+    class Config:
+        env_file = ".env"
+
+settings = Settings()
+```
+
+Never read `os.environ` directly elsewhere in the code — always go through `settings`.
+
+# main.py pattern
+
+```python
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.core.config import settings
+from app.routers import items
+
+app = FastAPI(title="Hackathon API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(items.router, prefix="/items", tags=["items"])
+```
+
+# Route + schema + model pattern (one full example)
+
+`models/item.py`:
+```python
+from sqlmodel import SQLModel, Field
+from typing import Optional
+
+class Item(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    price: float
+```
+
+`schemas/item.py`:
+```python
+from sqlmodel import SQLModel
+
+class ItemCreate(SQLModel):
+    name: str
+    price: float
+
+class ItemRead(SQLModel):
+    id: int
+    name: str
+    price: float
+```
+
+`routers/items.py`:
+```python
+from fastapi import APIRouter, HTTPException
+from app.schemas.item import ItemCreate, ItemRead
+from app.services import item_service
+
+router = APIRouter()
+
+@router.post("/", response_model=ItemRead)
+async def create_item(payload: ItemCreate):
+    return item_service.create_item(payload)
+
+@router.get("/{item_id}", response_model=ItemRead)
+async def get_item(item_id: int):
+    item = item_service.get_item(item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return item
+```
+
+# Conventions
+
+- Every route handler `async def`, even before real async I/O exists.
+- Every route has an explicit `response_model` — never return raw dicts or raw SQLModel table objects directly.
+- Route handlers stay thin: validate input (Pydantic does this automatically), call a `services/` function, return. No DB queries or business logic written inline in a router.
+- Use `HTTPException(status_code=..., detail=...)` for expected errors. Don't let raw exceptions/tracebacks reach the client.
+- Standard error shape (FastAPI's default `{"detail": "..."}` is fine — don't invent a custom envelope, the frontend rule expects this shape).
+- CORS origins come from `settings.cors_origins`, not a hardcoded `["*"]`.
+- Logging: use Python's `logging` module at `INFO` level for request-relevant events (item created, external call failed). Don't leave stray `print()` statements in for the demo.
+
+# Security basics
+
+- Secrets (`database_url`, API keys, JWT secret) come from `.env` via `settings` — never hardcoded, never committed.
+- Never return stack traces or raw exception text to the client; log the detail server-side and return a clean `HTTPException`.
+- Validate inputs with Pydantic schemas at the boundary; don't trust request bodies, query params, or path params.
+- Use parameterized queries via SQLModel/SQLAlchemy — never build SQL by string-concatenating user input.
+- Keep CORS restricted to `settings.cors_origins`; don't pair `["*"]` with `allow_credentials=True`.
+
+# If auth is actually needed for the demo
+
+Keep it minimal — a single hardcoded API key checked via a FastAPI dependency, or a short-lived JWT issued on a `/login` endpoint. Don't build refresh tokens, roles, or password reset flows unless a judging criterion specifically needs them. Ask before building anything beyond "is this request allowed at all."
+
+# Common gotchas
+
+- Blocking calls (`requests.get`, heavy CPU work) inside an `async def` route will stall the whole event loop — use `httpx.AsyncClient` for outbound HTTP, or run blocking work in a thread if there's no way around it.
+- SQLite + SQLModel: call `SQLModel.metadata.create_all(engine)` once on startup instead of setting up Alembic migrations — not worth the setup time in a hackathon.
+- Circular imports between `routers/` and `services/`: keep the dependency direction one-way (routers import services, never the reverse).
+- `response_model` silently drops fields not declared on the schema — if a field isn't showing up in the response, check the schema first before debugging the DB layer.

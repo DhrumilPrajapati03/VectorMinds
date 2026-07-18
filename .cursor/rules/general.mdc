@@ -1,0 +1,69 @@
+---
+description: Project-wide conventions for this hackathon repo (FastAPI + Next.js)
+alwaysApply: true
+---
+
+# Repo structure
+
+Single repo. The app lives under `lexo/` with two main folders:
+- `lexo/backend/` — FastAPI (Python, pip + venv)
+- `lexo/frontend/` — Next.js (TypeScript, App Router, Tailwind)
+
+```
+repo/
+  .cursor/rules/
+  lexo/
+    backend/
+    frontend/
+    docs/
+  README.md
+```
+
+Don't mix backend and frontend code across folders. Shared docs/config live under `lexo/docs/` or repo root.
+
+# Hackathon priorities
+
+- Ship working features fast. Prefer the simple, obvious solution over the "correct" architecture.
+- Don't add abstractions, extra libraries, or design patterns unless they save time *today*.
+- No premature auth/roles/permissions complexity unless the judging criteria need it — stub it if asked.
+- It's fine to hardcode demo data or skip edge cases; leave a `# TODO` comment instead of over-engineering.
+- Every feature should be demo-able end to end before moving to the next one. Don't build 5 half-finished features.
+
+# Env vars
+
+- Backend secrets in `lexo/backend/.env` (never committed — must be in `.gitignore`).
+- Frontend public config in `lexo/frontend/.env.local` (`NEXT_PUBLIC_*` prefix only for values safe to expose).
+- Always update `.env.example` in each folder when adding a new var, so teammates don't hit silent failures.
+
+# API contract between backend and frontend
+
+- Backend is the single source of truth for API shape. When a FastAPI response model changes, update the frontend fetch/type in the *same* task — don't leave them out of sync.
+- Standard error shape from backend (see backend rule) — frontend error handling should expect this shape everywhere, not per-endpoint custom parsing.
+- CORS on backend must explicitly allow the frontend's dev origin (`http://localhost:3000`) and, once known, the deployed frontend URL.
+- Plain REST + JSON only. No GraphQL, no gRPC — no time for that in a hackathon.
+
+# Git workflow
+
+- Small, frequent commits. Message format: `[backend|frontend] short description`.
+- Never commit `.env`, `node_modules/`, `venv/`, `__pycache__/`, `.next/`, `*.db`.
+- If two people touch the same file at the same time, pull before you push — don't force-push over teammates during the hackathon.
+
+# How Cursor should behave in this repo
+
+- When asked to add a feature that touches both backend and frontend, do the backend endpoint first, confirm the shape via `/docs`, then wire the frontend.
+- When unsure whether something is in scope for the demo, default to the smaller/faster implementation and say so, rather than silently building the bigger version.
+- Don't introduce new dependencies without flagging it — installing something new costs setup time mid-hackathon.
+- Before a large refactor (renaming folders, changing the API contract, swapping a library), explain the change first instead of just doing it.
+
+# Security basics (don't skip even in a hackathon)
+
+- Never hardcode secrets/API keys in source — read them from `.env` and keep `.env` out of git.
+- Never echo secrets into logs, error messages, or API responses.
+- Validate/parse all external input at the boundary (Pydantic on backend, typed parsing on frontend) — don't trust request bodies or query params.
+- Keep CORS restricted to known origins; never ship `allow_origins=["*"]` with `allow_credentials=True`.
+
+# Before the demo
+
+- README has: what it does, how to run backend + frontend locally, and the deployed link if there is one.
+- Remove dead code / commented-out experiments from files that will be shown on screen.
+- Double-check `.env.example` matches what's actually needed to run the project from scratch.

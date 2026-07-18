@@ -1,0 +1,166 @@
+---
+description: Next.js frontend conventions
+globs: lexo/frontend/**
+alwaysApply: false
+---
+
+# Stack
+
+Next.js (App Router) + TypeScript + Tailwind CSS. Tailwind chosen for speed — no separate CSS files, no styled-components, no extra build config.
+
+Setup:
+```
+npx create-next-app@latest frontend --typescript --tailwind --app --eslint
+cd frontend
+npm run dev
+```
+
+# Project structure
+
+```
+frontend/
+  app/
+    layout.tsx
+    page.tsx
+    items/
+      page.tsx              # one folder per route
+  components/                  # reusable UI, PascalCase filenames
+    ItemCard.tsx
+  lib/
+    api.ts                       # fetch wrapper for backend calls
+    types.ts                      # shared TS types matching backend schemas
+  .env.local
+  .env.example
+```
+
+# lib/api.ts pattern
+
+```ts
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_URL}${path}`, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? `Request failed: ${res.status}`);
+  }
+
+  return res.json();
+}
+```
+
+All backend calls go through this — no `fetch()` scattered directly inside components. One place to change if the error shape or base URL changes.
+
+# lib/types.ts pattern
+
+```ts
+export type Item = {
+  id: number;
+  name: string;
+  price: number;
+};
+
+export type ItemCreate = {
+  name: string;
+  price: number;
+};
+```
+
+Keep this in sync with the backend's `schemas/` — a schema change on the backend means updating this file in the same task.
+
+# Server vs Client components
+
+- Server Components by default (no `"use client"`). Fetch data directly in the component with `await apiFetch(...)`.
+- Add `"use client"` only when the component needs `useState`, `useEffect`, event handlers, or browser-only APIs — typically forms and interactive widgets, not data-display components.
+- Don't mark a whole page `"use client"` just because one small part of it needs interactivity — pull that part into its own small client component instead.
+
+Example server component fetching data:
+```tsx
+// app/items/page.tsx
+import { apiFetch } from "@/lib/api";
+import { Item } from "@/lib/types";
+
+export default async function ItemsPage() {
+  const items = await apiFetch<Item[]>("/items");
+  return (
+    <ul className="space-y-2">
+      {items.map((item) => (
+        <li key={item.id} className="rounded border p-3">{item.name} — ${item.price}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+Example client component for a form:
+```tsx
+"use client";
+import { useState } from "react";
+import { apiFetch } from "@/lib/api";
+import { ItemCreate } from "@/lib/types";
+
+export default function NewItemForm() {
+  const [name, setName] = useState("");
+  const [price, setPrice] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    try {
+      await apiFetch<Item>("/items", {
+        method: "POST",
+        body: JSON.stringify({ name, price } satisfies ItemCreate),
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-2">
+      <input value={name} onChange={(e) => setName(e.target.value)} className="border p-2 rounded w-full" placeholder="Name" />
+      <input type="number" value={price} onChange={(e) => setPrice(Number(e.target.value))} className="border p-2 rounded w-full" placeholder="Price" />
+      {error && <p className="text-red-600 text-sm">{error}</p>}
+      <button disabled={loading} className="rounded bg-black text-white px-4 py-2">
+        {loading ? "Saving..." : "Add item"}
+      </button>
+    </form>
+  );
+}
+```
+
+# Conventions
+
+- TypeScript everywhere, no `.js`/`.jsx` files. No `any` unless there's genuinely no time to type it — leave `// TODO: type this`.
+- Every data-fetching component handles loading and error state — even a bare `if (error) return <p>...</p>` is enough, don't skip it.
+- Styling: Tailwind utility classes directly in JSX. Extract to a `components/` file once a pattern repeats 3+ times, not before.
+- Keep components small and route-scoped. Don't build a generic design system mid-hackathon.
+- Forms: plain controlled inputs + `useState` (as above) unless the form is genuinely complex — don't reach for `react-hook-form` or `zod` just for a 2-field form, it's setup time you don't need.
+- Don't add a state-management library (Redux, Zustand, etc.). `useState` + passing props, or React Context for something truly global (e.g. current user), is enough at hackathon scale.
+
+# Security basics
+
+- Only expose values through `NEXT_PUBLIC_*` that are genuinely safe for the browser — never put backend secrets/API keys behind that prefix.
+- Never render untrusted HTML with `dangerouslySetInnerHTML`; let React escape values by default.
+- Treat data from the API as untrusted for display — the backend validates, but don't build URLs or eval anything from user/API input.
+- Keep secret-dependent calls (private API keys, server-only tokens) in Server Components / route handlers, not client components.
+
+# Common gotchas
+
+- Hydration mismatch errors usually mean something (like `Date.now()` or `Math.random()`) is rendered differently on server vs client — compute it in a `useEffect` on the client instead if it must be dynamic.
+- App Router `fetch()` caches by default. If data looks stale during a demo, add `{ cache: "no-store" }` to the fetch options for that call.
+- CORS errors in the browser console mean the backend's `cors_origins` doesn't include `http://localhost:3000` — fix it on the backend, not by adding headers on the frontend.
+- Forgetting `NEXT_PUBLIC_` prefix means an env var is silently `undefined` in the browser — server-only vars don't need the prefix, client-used vars must have it.
+
+# Deployment (if needed for the demo)
+
+Vercel is the fastest path for a Next.js app — connect the repo, set `NEXT_PUBLIC_API_URL` to wherever the backend ends up, done. Don't spend hackathon time on a custom deployment pipeline.
