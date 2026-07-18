@@ -1,3 +1,13 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-zinc-800;
+  }
+}
+
+::selection {
+  @apply bg-indigo-500/30;
+}
