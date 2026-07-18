@@ -140,7 +140,7 @@ TKT-001 → TKT-002 → TKT-003 → TKT-004 → TKT-006 → TKT-007 → TKT-008 
 
 **Scope:**
 - Add SQLModel table models mirroring the §5 ER diagram, including FKs.
-- `db.py`: engine + `get_session` dependency; default `sqlite:///./app.db` via `DATABASE_URL`; `create_all` on startup.
+- `db.py`: engine + `get_session` dependency; required `DATABASE_URL` pointing at Neon Serverless Postgres (no SQLite fallback); `create_all` on startup.
 - Extend the existing `Report`/`Flag` Pydantic schemas per the §5 note (`document_id`, `summary`, `created_at`, nested `citations` with a `verified` boolean instead of a bare citation string).
 
 **Out of scope:**
@@ -148,12 +148,13 @@ TKT-001 → TKT-002 → TKT-003 → TKT-004 → TKT-006 → TKT-007 → TKT-008 
 
 **Acceptance criteria:**
 - [ ] All 8 tables from §5 exist with correct foreign keys.
-- [ ] App startup creates tables without error on a fresh database.
+- [ ] App startup creates tables without error on a fresh Neon database.
 - [ ] `Report`/`Flag` schemas match the extended shape described in `SYSTEM_DESIGN.md` §5.
+- [ ] Missing `DATABASE_URL` fails clearly at boot; no SQLite default.
 
 **Maps to:** supports FR-4, FR-27, FR-29, FR-30
 
-**Notes / risks:** SQLite by default is fine for the hackathon even though `SYSTEM_DESIGN.md` names Postgres — swapping `DATABASE_URL` later is a config change, not a code change; no Alembic setup time needed.
+**Notes / risks:** Use Neon’s pooled connection string (`postgresql://...?sslmode=require`) from the neon.tech console in `lexo/backend/.env`. Normalize `postgres://` → `postgresql://` for SQLAlchemy. No Alembic — `create_all` is enough for the hackathon.
 
 ---
 
@@ -846,7 +847,7 @@ TKT-001 → TKT-002 → TKT-003 → TKT-004 → TKT-006 → TKT-007 → TKT-008 
 | Demo value | The product is reachable at a real URL for judges. |
 
 **Scope:**
-- Deploy backend (`uvicorn`) + frontend (`next build`/`next start`) as separate Render web services; provision managed Postgres; set env var groups (all API keys, `JWT_SECRET`, `DATABASE_URL`, S3 credentials); point `NEXT_PUBLIC_API_URL` at the deployed backend; update CORS to include the deployed frontend URL.
+- Deploy backend (`uvicorn`) + frontend (`next build`/`next start`) as separate Render web services; use Neon Serverless Postgres (`DATABASE_URL` from Neon console); set env var groups (all API keys, `JWT_SECRET`, `DATABASE_URL`, S3 credentials); point `NEXT_PUBLIC_API_URL` at the deployed backend; update CORS to include the deployed frontend URL.
 
 **Acceptance criteria:**
 - [ ] The deployed frontend URL can complete the Phase 1–3 flow against the deployed backend.
