@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlmodel import Session
 
 from db import get_session
@@ -27,3 +27,14 @@ async def get_document(
     current_user: User = Depends(get_current_user),
 ):
     return document_service.get_document(session, current_user, document_id)
+
+
+@router.delete("/{document_id}", status_code=204, response_class=Response)
+async def delete_document(
+    document_id: UUID,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Cascade-delete owned document + report children + blob (TKT-037)."""
+    document_service.delete_document(session, current_user, document_id)
+    return Response(status_code=204)

@@ -18,6 +18,8 @@ Lexo is an AI legal-document assistant for everyday people in India reviewing **
 | File storage | **Local disk** via `UPLOAD_DIR` | `services/storage.py` writes under `./uploads` (configurable). Not S3/`boto3` for MVP. `get_signed_url` is intentionally unimplemented. |
 | Build order | **Backend-first** | Confirm shapes in `/docs`, then wire the frontend. |
 | Layout | **Top-level `lexo/backend/`** | Keep `main.py`, `config.py`, `db.py`, `routes/`, `models/`, `services/` at the backend root — do **not** restructure into `app/`. |
+| Voice STT (TKT-027) | **Browser Web Speech API** | Wispr unused. No `WISPR_API_KEY`. No server-side STT. Backend gets **text** questions only (`/api/voice/ask`). Chrome = demo browser. |
+| Rate limits (TKT-035) | **20 uploads / 10 analyze / user / hour** | In-memory counters (TKT-036); no Redis. |
 
 ---
 
@@ -27,16 +29,28 @@ Mark **DONE** only if the implementation exists in the repo. Everything else is 
 
 | Ticket | Title | Status | Evidence in repo |
 |---|---|---|---|
-| **TKT-001** | Backend config & env foundation | **DONE** | `config.py` (`Settings` + validators), CORS from `settings.cors_origins`, `.env.example` (`GEMINI_API_KEY`, `JWT_SECRET`, `DATABASE_URL`, `UPLOAD_DIR`, …), deps in `requirements.txt` |
-| **TKT-002** | Data models & DB setup (SQLModel) | **DONE** | `models/tables.py` (8 tables), `db.py` (engine, `get_session`, `create_db_and_tables`), lifespan `create_all` in `main.py`, Neon-only `DATABASE_URL` |
-| **TKT-003** | Object storage helper | **DONE** (local-disk path) | `services/storage.py`: `upload_file` / `read_file` / `delete_file`; `get_signed_url` → `NotImplementedError` + TODO for later S3 |
-| **TKT-004** | Auth backend: signup + login (JWT) | **DONE** | `routes/auth.py` + `services/auth_service.py`: `POST /api/auth/signup`, `POST /api/auth/login`; bcrypt + PyJWT (~15 min access token) |
-| **TKT-005** | Auth refresh + logout | **DONE** | Signup/login issue `refresh_token` (hashed in `refresh_tokens`); `POST /api/auth/refresh`, `POST /api/auth/logout`; `get_current_user` Bearer dependency |
-| **TKT-006+** | Auth/upload/dashboard frontend, analyze, voice, deploy, … | **Not done** | See checklist below |
-| **TKT-007** | Upload backend | **DONE** | `POST /api/upload`: JWT + multipart PDF/DOCX + `doc_type`, `storage.upload_file`, `documents` row `status=uploaded`, returns `document_id` |
-| **TKT-008** | Documents list + status | **DONE** | `GET /api/documents`, `GET /api/documents/{id}` (owner-scoped; cross-user → 404); `status` + `risk_score` (null until report) |
-| Analyze / voice stubs | Pipeline + voice | **Not done** | `POST /api/analyze`, `POST /api/voice` return **501** |
-| Frontend | Next.js screens | **Not done** | Placeholder home only (`app/page.tsx`: “Coming soon”) |
+| **TKT-001** | Backend config & env foundation | **DONE** | `config.py` (`Settings` + validators), CORS from `settings.cors_origins`, `.env.example`, deps in `requirements.txt` |
+| **TKT-002** | Data models & DB setup (SQLModel) | **DONE** | `models/tables.py` (8 tables), `db.py`, lifespan `create_all` in `main.py` |
+| **TKT-003** | Object storage helper | **DONE** (local-disk path) | `services/storage.py` |
+| **TKT-004** | Auth backend: signup + login (JWT) | **DONE** | `routes/auth.py` + `services/auth_service.py` |
+| **TKT-005** | Auth refresh + logout | **DONE** | refresh/logout + `get_current_user` |
+| **TKT-006+** | Auth/upload/dashboard frontend | **Not done** | Frontend still placeholder |
+| **TKT-007** | Upload backend | **DONE** | `POST /api/upload` (+ rate limit TKT-036) |
+| **TKT-008** | Documents list + status | **DONE** | `GET /api/documents`, `GET /api/documents/{id}` (+ optional `report_id`) |
+| **TKT-014** | Text extraction service | **DONE** | `services/extraction.py` |
+| **TKT-015** | Gemini analysis service | **DONE** | `services/llm.py` → `AnalysisResult` |
+| **TKT-016** | Analyze pipeline orchestration | **DONE** | `POST /api/analyze/{document_id}` + `services/analyze_service.py` BackgroundTasks; statuses `extracting` → `analyzing` → `grounding` → `analyzed` / `failed` |
+| **TKT-017** | Report persistence + GET report | **DONE** | Persist Report/Flag/MissingClause/ActionItem; `GET /api/reports/{id}`; `DocumentRead.report_id` for polling navigation |
+| **TKT-023** | Exa grounding service | **DONE** (lean) | `services/grounding.py`: Exa REST via httpx; trusted domains; max 3 flags; missing_clauses skipped; unverified fallback without fabricating URLs |
+| **TKT-024** | Wire grounding + persist citations | **Partial** | Citations persisted on flags during analyze; no separate refactor. UI badges still frontend (TKT-025). |
+| **TKT-027** | STT path decision (OQ-1) | **DONE** (docs) | Web Speech; `/api/voice/transcribe` → 501 |
+| **TKT-028** | TTS backend: ElevenLabs `speak` | **DONE** | `POST /api/voice/speak` → `audio/mpeg`; `services/voice.py` via httpx; 503 if no `ELEVENLABS_API_KEY` |
+| **TKT-029** | STT `transcribe` 501 contract | **DONE** | Explicit 501; Web Speech is primary |
+| **TKT-030** | Voice Q&A backend | **DONE** | `POST /api/voice/ask` + `llm.answer_question`; report-scoped; JWT; `{answer, disclaimer}` |
+| **TKT-035** | Rate-limit thresholds | **DONE** (docs) | 20 uploads / 10 analyze per user per hour |
+| **TKT-036** | Rate limiting on upload/analyze | **DONE** | `services/rate_limit.py` in-memory deps on upload + analyze → 429 |
+| **TKT-037** | Delete flow (backend half) | **DONE** (backend) | `DELETE /api/documents/{id}` cascade + blob; 204; frontend delete UI still open |
+| Frontend / deploy | … | **Not done** | Voice UI, dashboard, report page, Render deploy |
 
 ---
 
@@ -45,36 +59,40 @@ Mark **DONE** only if the implementation exists in the repo. Everything else is 
 ```
 lexo/
   backend/
-    main.py                 # FastAPI app, CORS, lifespan → create_all, router includes, GET /health
-    config.py               # pydantic-settings Settings (DATABASE_URL, JWT_SECRET, UPLOAD_DIR, …)
+    main.py                 # FastAPI app, CORS, lifespan → create_all, routers, GET /health
+    config.py               # pydantic-settings Settings
     db.py                   # Neon engine, get_session, create_db_and_tables
-    requirements.txt
-    .env.example            # copy → .env (never commit .env)
-    .env                    # local secrets (gitignored)
+    requirements.txt        # includes httpx (Exa + ElevenLabs TTS)
+    .env.example
     models/
-      tables.py             # SQLModel: users, documents, reports, flags, citations,
-                            #             missing_clauses, action_items, refresh_tokens
-      schemas.py            # API: auth tokens, UploadResponse, DocumentRead, Report/Flag/Citation
+      tables.py
+      schemas.py            # + SpeakRequest, AskRequest, AskResponse
     routes/
-      auth.py               # signup, login, refresh, logout  ✅
-      upload.py             # POST /api/upload  ✅
-      documents.py          # GET /api/documents, GET /api/documents/{id}  ✅
-      analyze.py            # POST /api/analyze → 501 stub
-      voice.py              # POST /api/voice → 501 stub
+      auth.py               ✅
+      upload.py             ✅ (+ rate limit)
+      documents.py          ✅ (+ DELETE)
+      analyze.py            ✅ (+ rate limit)
+      reports.py            ✅ GET /api/reports/{report_id}
+      voice.py              ✅ speak + ask; transcribe still 501
     services/
-      auth_service.py       # hash/verify, JWT, refresh tokens, get_current_user
-      document_service.py   # upload validation + document create/list/get
-      storage.py            # local-disk upload_file / read_file / delete_file
-    uploads/                # created on first storage write (UPLOAD_DIR)
+      auth_service.py
+      document_service.py   # + delete_document cascade
+      storage.py
+      extraction.py
+      llm.py                # + answer_question
+      grounding.py
+      analyze_service.py
+      report_service.py
+      voice.py              # ElevenLabs TTS
+      rate_limit.py         # in-memory upload/analyze limits
+    uploads/
   frontend/
     app/page.tsx            # placeholder only
-    .env.local.example      # NEXT_PUBLIC_API_URL=http://localhost:8000
   docs/
     SETUP_AND_PROGRESS.md   # this file
     FEATURE_TICKETS.md
     SYSTEM_DESIGN.md
-    PRD.md
-    SECURITY_AND_ACCESS.md
+    …
 ```
 
 ---
@@ -94,25 +112,20 @@ Copy-Item .env.example .env
 
 | Variable | What to put |
 |---|---|
-| `DATABASE_URL` | Neon **pooled** URL, e.g. `postgresql://USER:PASSWORD@HOST/DB?sslmode=require` |
-| `JWT_SECRET` | Long random string (required; app will not start if empty). Example: `openssl rand -hex 32`, or in PowerShell: `-join ((1..64) \| ForEach-Object { '{0:x}' -f (Get-Random -Max 16) })` |
-| `CORS_ORIGINS` | Keep `["http://localhost:3000"]` for local Next.js |
-| `UPLOAD_DIR` | Keep `./uploads` unless you need another path |
-| API keys (`GEMINI_*`, `EXA_*`, …) | Can stay empty until analyze/voice tickets |
+| `DATABASE_URL` | Neon **pooled** URL |
+| `JWT_SECRET` | Long random string (required) |
+| `GEMINI_API_KEY` | Required for analyze + `/api/voice/ask` |
+| `EXA_API_KEY` | Optional — without it, pipeline still reaches `analyzed` with unverified citations |
+| `ELEVENLABS_API_KEY` | Optional — required only for `/api/voice/speak` (else 503) |
+| `ELEVENLABS_VOICE_ID` | Optional — defaults to Rachel |
+| `CORS_ORIGINS` | Keep `["http://localhost:3000"]` |
+| `UPLOAD_DIR` | Keep `./uploads` |
 
-5. **Never commit `.env`.** It is listed in `lexo/.gitignore`. Commit only `.env.example`.
-
-`DATABASE_URL` notes:
-
-- Prefer Neon’s **pooled** string from the console.
-- `postgres://` is normalized to `postgresql://` in `config.py`.
-- Missing/empty `DATABASE_URL` or `JWT_SECRET` fails at import/boot with a clear validator error — there is no SQLite default.
+5. **Never commit `.env`.**
 
 ---
 
 ## 6. Run the backend (Windows PowerShell)
-
-From a fresh shell:
 
 ```powershell
 cd c:\Users\Dell\Downloads\cursor-ahm\lexo\backend
@@ -127,46 +140,38 @@ uvicorn main:app --reload
 
 Default URL: **http://127.0.0.1:8000**
 
-If execution policy blocks activation:
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\venv\Scripts\Activate.ps1
-```
-
-Frontend is not required yet for backend work. When you need it later:
-
-```powershell
-cd c:\Users\Dell\Downloads\cursor-ahm\lexo\frontend
-Copy-Item .env.local.example .env.local
-npm install
-npm run dev
-```
-
 ---
 
 ## 7. How to verify
 
 | Check | How |
 |---|---|
-| Health | Open [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health) → `{"status":"ok"}` |
-| OpenAPI / Swagger | [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) — auth, upload, documents, plus analyze/voice 501 stubs |
-| Auth smoke test | **signup** / **login** → `access_token` + `refresh_token`; **refresh** with refresh token → new access; **logout** (Bearer + refresh body) → later refresh → 401 |
-| Upload smoke test | Authorize with access token → **POST /api/upload** (PDF/DOCX + `doc_type`) → `document_id`; file under `UPLOAD_DIR`; Neon `documents` row `status=uploaded` |
-| Documents smoke test | **GET /api/documents** → current user’s docs newest first; **GET /api/documents/{id}** for own id works; another user’s id → **404** (not 403) |
-| Neon tables after boot | `users`, `documents`, `reports`, `flags`, `citations`, `missing_clauses`, `action_items`, `refresh_tokens` |
-| Still stubs | `POST /api/analyze`, `POST /api/voice` → **501** |
+| Health | [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health) → `{"status":"ok"}` |
+| OpenAPI / Swagger | [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) |
+| Auth | signup/login → Bearer `access_token` |
+| Upload → analyze → report | See §7.1 below |
+| Cross-user | Another user’s document/report id → **404** |
+| Without `EXA_API_KEY` | Pipeline still reaches `analyzed`; flag citations `verified=false` |
+| Speak | `POST /api/voice/speak` `{ "text": "..." }` → `audio/mpeg` (503 if no ElevenLabs key) |
+| Ask | `POST /api/voice/ask` `{ "report_id", "question" }` → `{ "answer", "disclaimer" }` |
+| Transcribe | `POST /api/voice/transcribe` → **501** (unchanged) |
+| Delete | `DELETE /api/documents/{id}` → **204**; subsequent GETs → **404** |
+| Rate limits | >20 uploads or >10 analyze / hour / user → **429** |
+
+### 7.1 Swagger smoke: upload → analyze → report
+
+1. **Authorize** with access token from signup/login.
+2. **POST /api/upload** — PDF/DOCX + `doc_type` (`rental` or `employment`) → `document_id`.
+3. **POST /api/analyze/{document_id}** → immediate `{"document_id","status":"extracting"}` (409 if already in progress / analyzed).
+4. **GET /api/documents/{id}** poll until `status` is `analyzed` (or `failed`). When analyzed, note `report_id`.
+5. **GET /api/reports/{report_id}** → `risk_score`, `summary`, `flags` (with `citations`), `missing_clauses`, `action_items`, `disclaimer`.
 
 ---
 
 ## 8. What’s next (suggested order)
 
-Foundation through upload + document list is in place. Continue Phase 1:
-
-1. **Frontend** — **TKT-006** login/signup UI (store access + refresh), then **TKT-009** upload page and **TKT-010** dashboard list.
-2. Then Phase 2+ per [`FEATURE_TICKETS.md`](./FEATURE_TICKETS.md) (extract → Gemini analyze → report → grounding → voice).
-
-Do not start analyze/voice UI while frontend auth/upload are still placeholders.
+1. **Frontend** — TKT-006 login, TKT-009 upload, TKT-010 dashboard (incl. delete button), TKT-019 analyze polling, TKT-020 report page (+ TKT-025 citation badges, TKT-031/032 voice UI).
+2. Deploy (TKT-034) when the core FE path is demoable.
 
 ---
 
@@ -174,23 +179,25 @@ Do not start analyze/voice UI while frontend auth/upload are still placeholders.
 
 ### Done
 
-- [x] `Settings` + `.env` / `.env.example` contract (`DATABASE_URL`, `JWT_SECRET`, `UPLOAD_DIR`, API key placeholders)
-- [x] CORS for `http://localhost:3000` (credentials allowed; origins not `*`)
-- [x] Neon Postgres via SQLModel; `create_all` on startup; 8 tables
-- [x] Local-disk `services/storage.py`
-- [x] `POST /api/auth/signup` + `POST /api/auth/login` (JWT access + refresh tokens)
-- [x] `POST /api/auth/refresh` + `POST /api/auth/logout` (`TKT-005`)
-- [x] `get_current_user` Bearer access JWT dependency
-- [x] Real `POST /api/upload` (`TKT-007`)
-- [x] `GET /api/documents` + `GET /api/documents/{id}` (`TKT-008`)
-- [x] `GET /health`
+- [x] Settings + Neon + local storage + auth + upload + documents list
+- [x] Extraction (`TKT-014`) + Gemini analysis (`TKT-015`)
+- [x] Analyze orchestration (`TKT-016`) — BackgroundTasks pipeline
+- [x] Report persist + `GET /api/reports/{id}` (`TKT-017`) + disclaimer field
+- [x] Lean Exa grounding (`TKT-023`) + citations persisted (`TKT-024` partial)
+- [x] `DocumentRead.report_id` for post-analyze navigation
+- [x] STT decision (`TKT-027`) — Web Speech; Wispr unused
+- [x] ElevenLabs TTS (`TKT-028`) — `POST /api/voice/speak`
+- [x] Voice Q&A (`TKT-030`) — `POST /api/voice/ask`
+- [x] Rate limits (`TKT-036`) — upload/analyze in-memory
+- [x] Delete backend (`TKT-037` half) — `DELETE /api/documents/{id}`
 
 ### Not done
 
-- [ ] Analyze pipeline (`TKT-014`…); `/api/analyze` still 501
-- [ ] Voice (`TKT-028`…); `/api/voice` still 501
-- [ ] Frontend beyond placeholder home (`TKT-006`, `TKT-009`, `TKT-010`, …)
-- [ ] Deploy / rate limits / delete hardening (Phase 5)
+- [ ] Citation UI badges (`TKT-025`)
+- [ ] Voice UI (`TKT-031`, `TKT-032`)
+- [ ] Frontend beyond placeholder home (`TKT-006`, `TKT-009`, `TKT-010`, `TKT-019`, `TKT-020`, …)
+- [ ] Delete button on dashboard (TKT-037 frontend half)
+- [ ] Deploy (TKT-034)
 
 ---
 

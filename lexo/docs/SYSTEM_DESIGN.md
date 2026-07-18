@@ -13,7 +13,7 @@ Lexo is an AI-powered legal document assistant that helps everyday people unders
 - **Grounded, not generative, citations.** Every legal citation shown to a user must come from a real source retrieved via Exa. If no reliable source can be found for a claim, the report must label it as an *unverified / general principle* rather than inventing a statute or section number.
 - **Plain language first.** Every flag and missing clause must be explained in language a non-lawyer can understand, with the legal citation shown as supporting evidence, not as the primary explanation.
 - **Not legal advice.** Every report and every API response carries an explicit disclaimer that Lexo provides informational analysis, not a substitute for a lawyer.
-- **Accessible beyond text.** Voice input (Wispr Flow) and voice output (ElevenLabs) let users who are less comfortable reading dense text still use the product.
+- **Accessible beyond text.** Voice input (browser Web Speech API) and voice output (ElevenLabs) let users who are less comfortable reading dense text still use the product.
 - **Privacy-respecting persistence.** Accounts and documents are persisted so users can revisit past reports, but access is strictly per-user, storage is encrypted, and users can delete their data at any time.
 
 ## 2. High-Level Architecture
@@ -28,18 +28,17 @@ flowchart LR
     Gemini[Google Gemini<br/>extraction / analysis / OCR]
     Exa[Exa API<br/>legal grounding]
     Eleven[ElevenLabs<br/>text-to-speech]
-    Wispr[Wispr Flow<br/>speech-to-text]
+    WebSpeech[Browser Web Speech API<br/>speech-to-text client-side]
 
     User -->|HTTPS| FE
     FE -->|REST/JSON| BE
+    FE -->|mic → transcript| WebSpeech
     BE --> DB
     BE --> Blob
     BE -->|extract / analyze| Gemini
     BE -->|search + contents| Exa
     BE -->|synthesize speech| Eleven
-    BE -->|transcribe| Wispr
     Eleven -->|audio stream| FE
-    Wispr -->|transcript| FE
 ```
 
 **Why this shape:**
@@ -59,7 +58,7 @@ flowchart LR
 | Dashboard (`/dashboard`) | List of the user's past documents/reports with status and risk badge |
 | Upload (`/upload`) | Doc-type selection (rental / employment), drag-and-drop file picker, calls `/api/upload` then `/api/analyze/{document_id}` |
 | Status (`/documents/[id]`) | Polls `/api/documents/{id}` while processing, shows progress stages (extracting → analyzing → grounding) |
-| Report (`/reports/[id]`) | Risk badge (green/yellow/red), flags with citations, missing clauses, action items, "Listen to summary" audio player (ElevenLabs), mic button for voice Q&A (Wispr Flow) |
+| Report (`/reports/[id]`) | Risk badge (green/yellow/red), flags with citations, missing clauses, action items, "Listen to summary" audio player (ElevenLabs), mic button for voice Q&A (browser Web Speech API) + typed question fallback |
 
 ### 3.2 Backend (`lexo/backend`, FastAPI)
 
@@ -71,14 +70,14 @@ Existing stub routers are extended into real functionality; no new top-level str
 | `routes/upload.py` | Accepts multipart file + `doc_type`, validates type/size, stores blob, creates `documents` row, returns `document_id` |
 | `routes/analyze.py` | Triggers the processing pipeline (§4) as a background task; exposes status polling |
 | `routes/reports.py` *(new)* | Fetches a persisted `Report` by id, scoped to the authenticated user |
-| `routes/voice.py` | `/api/voice/transcribe` (STT via Wispr Flow) and `/api/voice/speak` (TTS via ElevenLabs) |
+| `routes/voice.py` | `/api/voice/speak` (TTS via ElevenLabs); `/api/voice/ask` (text question → grounded answer); `/api/voice/transcribe` remains **501** (unused — STT is client-side Web Speech) |
 
 New service layer under `backend/services/` (proposed):
 
 - `extraction.py` — text extraction (pdfplumber / python-docx) + scanned-page fallback via Gemini multimodal input
 - `llm.py` — Gemini client wrapper: clause segmentation, risk analysis, missing-clause detection, voice Q&A answering
 - `grounding.py` — Exa client wrapper: query generation per flag, trusted-domain filtering, citation extraction
-- `voice.py` — ElevenLabs (TTS) and Wispr Flow (STT) client wrappers
+- `voice.py` — ElevenLabs (TTS) client wrapper only; no server-side STT / no Wispr client
 - `storage.py` — S3-compatible blob upload/download helpers
 
 ### 3.3 Storage
@@ -138,7 +137,7 @@ sequenceDiagram
    - *Employment:* notice pay, non-compete/non-solicit reasonableness, termination cause, statutory benefits (PF/gratuity mention).
 6. **Legal grounding (Exa)** — for every flag and missing clause, generate a targeted search query, call Exa search + contents, filter results to trusted domains (`indiacode.nic.in`, `indiankanoon.org`, government/ministry sources), and attach the citation snippet + URL. If no source clears the confidence bar, the item is explicitly labeled unverified rather than given a fabricated citation — this is the core anti-hallucination guardrail.
 7. **Aggregation** — flags are rolled up into an overall `risk_score` (green/yellow/red), and the full `Report` is persisted.
-8. **Optional voice** — ElevenLabs converts the report summary to speech on demand; Wispr Flow transcribes spoken questions, which are answered by Gemini using the analyzed document + its citations as grounding context (no new information introduced beyond what's already in the report).
+8. **Optional voice** — ElevenLabs converts the report summary to speech on demand; the browser Web Speech API transcribes spoken questions client-side (user may also type). The frontend sends the **text** question to the backend; Gemini answers using the analyzed document + its citations as grounding context (no new information introduced beyond what's already in the report). No server-side STT.
 
 **Async execution:** MVP uses FastAPI `BackgroundTasks` triggered from `/api/analyze/{document_id}`, with the frontend polling `/api/documents/{id}` for status. If load requires it later, this can graduate to a Celery + Redis (or Render Background Worker) queue without changing the API contract.
 
@@ -232,7 +231,8 @@ This extends the current `Report`/`Flag` Pydantic models in [`backend/models/sch
 | `DELETE /api/documents/{id}` | Delete document + blob + associated report (right-to-delete) | Yes |
 | `POST /api/analyze/{document_id}` | Kick off the processing pipeline | Yes |
 | `GET /api/reports/{id}` | Fetch full structured report | Yes |
-| `POST /api/voice/transcribe` | Audio in → transcript out (Wispr Flow) | Yes |
+| `POST /api/voice/transcribe` | **Unsupported (501)** — STT is client-side Web Speech; do not send audio here | Yes |
+| `POST /api/voice/ask` | Text question in → grounded answer (Gemini; report-scoped) | Yes |
 | `POST /api/voice/speak` | Text in → audio out (ElevenLabs) | Yes |
 | `GET /health` | Liveness check | No |
 
@@ -256,7 +256,7 @@ All authenticated endpoints scope queries by the requesting user's id; a user ca
 | Backend (`lexo/backend`) | Web Service (Python, `uvicorn main:app`) |
 | Database | Neon Serverless Postgres (external; set `DATABASE_URL` on the Render backend service) |
 | Object storage | External S3-compatible bucket (Cloudflare R2 / AWS S3) — not a Render-native resource |
-| Secrets | Render environment groups shared across services (`GEMINI_API_KEY`, `EXA_API_KEY`, `ELEVENLABS_API_KEY`, `WISPR_API_KEY`, `DATABASE_URL` from Neon, JWT signing secret, object storage credentials) |
+| Secrets | Render environment groups shared across services (`GEMINI_API_KEY`, `EXA_API_KEY`, `ELEVENLABS_API_KEY`, `DATABASE_URL` from Neon, JWT signing secret, object storage credentials). `WISPR_API_KEY` is unused (STT is browser Web Speech). |
 | Health checks | Existing `GET /health` on the backend |
 | Async jobs (future) | Render Background Worker, only if/when the pipeline graduates from `BackgroundTasks` to a real queue |
 
@@ -276,9 +276,12 @@ To align the existing scaffold with the decisions above, a future implementation
 | **1 — Foundation** | Auth (signup/login/JWT), upload endpoint, object storage integration, `documents` table, dashboard shell |
 | **2 — Core analysis** | Text extraction + Gemini clause segmentation + risk analysis + missing-clause checklist, report persistence, report UI |
 | **3 — Grounding** | Exa integration, trusted-domain filtering, citation persistence, unverified-claim labeling |
-| **4 — Voice** | ElevenLabs TTS for report summaries, Wispr Flow (or fallback STT) for voice Q&A grounded in the report |
+| **4 — Voice** | ElevenLabs TTS for report summaries; browser Web Speech API (client-side STT) + typed fallback for voice Q&A grounded in the report |
 | **5 — Deployment & hardening** | Render deployment of FE/BE + Neon Postgres (`DATABASE_URL`), rate limiting, delete/retention flows, disclaimers, monitoring |
 
-## 11. Open Assumptions to Confirm Before Phase 4
+## 11. Voice / STT decision (resolved — TKT-027)
 
-- Wispr Flow is primarily a desktop dictation product; its availability as a server-callable STT API is unconfirmed. The voice-in design assumes a generic STT endpoint contract (`/api/voice/transcribe`) that can be backed by Wispr Flow if it exposes a usable API, or a fallback (e.g. browser Web Speech API on the client) otherwise. This should be confirmed before Phase 4 implementation begins.
+- **Wispr Flow is not used.** There is no server-side STT and no `WISPR_API_KEY` requirement.
+- **Speech-to-text = browser Web Speech API** (`SpeechRecognition` / `webkitSpeechRecognition`) on the frontend. Chrome is the demo browser. Users may also type the question.
+- `POST /api/voice/transcribe` stays as an explicit **501** documenting the client-side path; the frontend never depends on it for the demo.
+- Voice Q&A sends **text** to `POST /api/voice/ask` (TKT-030); TTS remains `POST /api/voice/speak` (ElevenLabs).

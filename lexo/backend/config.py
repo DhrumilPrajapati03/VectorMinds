@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     exa_api_key: str = ""
     elevenlabs_api_key: str = ""
+    # Default ElevenLabs "Rachel" voice — override via ELEVENLABS_VOICE_ID if needed.
+    elevenlabs_voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+    # Optional / unused — STT is browser Web Speech (TKT-027); never required to boot.
     wispr_api_key: str = ""
     upload_dir: str = "./uploads"
 

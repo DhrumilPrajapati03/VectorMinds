@@ -6,14 +6,14 @@ alwaysApply: false
 
 # Stack
 
-Python + FastAPI. Dependency management via plain `pip` + `venv` — no poetry/uv. Deps pinned in `lexo/backend/requirements.txt`. DB: SQLite via SQLModel by default (zero setup, file-based, fast enough for a hackathon demo). Swap the connection string later if a real DB is needed — the code pattern below doesn't change.
+Python + FastAPI. Dependency management via plain `pip` + `venv` — no poetry/uv. Deps pinned in `lexo/backend/requirements.txt`. DB: **Neon Serverless Postgres** via SQLModel + `psycopg2-binary`. `DATABASE_URL` is required (pooled connection string from the neon.tech console, typically `postgresql://...?sslmode=require`). No SQLite fallback.
 
 Setup:
 ```
 python -m venv venv
 source venv/bin/activate        # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload
+uvicorn main:app --reload
 ```
 
 `requirements.txt` baseline:
@@ -22,41 +22,50 @@ fastapi
 uvicorn[standard]
 pydantic-settings
 sqlmodel
+psycopg2-binary
 python-dotenv
 ```
 
 # Project structure
 
+Keep the top-level `lexo/backend/` layout (do **not** restructure into `app/`):
+
 ```
 backend/
-  app/
-    main.py                # FastAPI() instance, CORS, router includes, startup/shutdown
-    core/
-      config.py             # Settings via pydantic-settings, reads .env
-      db.py                  # engine + session dependency
-    routers/                  # one file per resource
-      items.py
-    schemas/                    # Pydantic request/response models (API-facing)
-      item.py
-    models/                       # SQLModel table models (DB-facing)
-      item.py
-    services/                       # business logic, kept out of routers
-      item_service.py
+  main.py                 # FastAPI() instance, CORS, router includes, lifespan create_all
+  config.py               # Settings via pydantic-settings, reads .env
+  db.py                   # engine + get_session + create_db_and_tables
+  routes/                 # one file per resource
+  models/
+    tables.py             # SQLModel table models (DB-facing)
+    schemas.py            # Pydantic request/response models (API-facing)
+  services/               # business logic, kept out of routers (add as needed)
   requirements.txt
   .env
   .env.example
 ```
 
-Keep `schemas/` (what the API returns) separate from `models/` (what's in the DB) even if they look identical at first — they diverge fast once you add computed fields or hide internal columns.
+Keep `schemas.py` (what the API returns) separate from `tables.py` (what's in the DB) even if they look identical at first — they diverge fast once you add computed fields or hide internal columns.
 
-# core/config.py pattern
+# config.py pattern
 
 ```python
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    database_url: str = "sqlite:///./app.db"
+    database_url: str  # required — Neon pooled URL; no sqlite default
     cors_origins: list[str] = ["http://localhost:3000"]
+
+    @field_validator("database_url")
+    @classmethod
+    def normalize_database_url(cls, v: str) -> str:
+        url = v.strip()
+        if url.startswith("postgres://"):
+            url = "postgresql://" + url[len("postgres://"):]
+        if not url.startswith("postgresql://"):
+            raise ValueError("DATABASE_URL must be a Neon Postgres connection string")
+        return url
 
     class Config:
         env_file = ".env"
@@ -69,12 +78,19 @@ Never read `os.environ` directly elsewhere in the code — always go through `se
 # main.py pattern
 
 ```python
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.config import settings
-from app.routers import items
+from config import settings
+from db import create_db_and_tables
+from routes import upload
 
-app = FastAPI(title="Hackathon API")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    create_db_and_tables()
+    yield
+
+app = FastAPI(title="Lexo API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -84,12 +100,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(items.router, prefix="/items", tags=["items"])
+app.include_router(upload.router)
 ```
 
 # Route + schema + model pattern (one full example)
 
-`models/item.py`:
+`models/tables.py`:
 ```python
 from sqlmodel import SQLModel, Field
 from typing import Optional
@@ -100,25 +116,25 @@ class Item(SQLModel, table=True):
     price: float
 ```
 
-`schemas/item.py`:
+`models/schemas.py`:
 ```python
-from sqlmodel import SQLModel
+from pydantic import BaseModel
 
-class ItemCreate(SQLModel):
+class ItemCreate(BaseModel):
     name: str
     price: float
 
-class ItemRead(SQLModel):
+class ItemRead(BaseModel):
     id: int
     name: str
     price: float
 ```
 
-`routers/items.py`:
+`routes/items.py`:
 ```python
 from fastapi import APIRouter, HTTPException
-from app.schemas.item import ItemCreate, ItemRead
-from app.services import item_service
+from models.schemas import ItemCreate, ItemRead
+from services import item_service
 
 router = APIRouter()
 
@@ -159,6 +175,6 @@ Keep it minimal — a single hardcoded API key checked via a FastAPI dependency,
 # Common gotchas
 
 - Blocking calls (`requests.get`, heavy CPU work) inside an `async def` route will stall the whole event loop — use `httpx.AsyncClient` for outbound HTTP, or run blocking work in a thread if there's no way around it.
-- SQLite + SQLModel: call `SQLModel.metadata.create_all(engine)` once on startup instead of setting up Alembic migrations — not worth the setup time in a hackathon.
-- Circular imports between `routers/` and `services/`: keep the dependency direction one-way (routers import services, never the reverse).
+- Neon + SQLModel: call `SQLModel.metadata.create_all(engine)` once on startup instead of setting up Alembic migrations — not worth the setup time in a hackathon. Ensure `DATABASE_URL` uses `sslmode=require` (Neon console pooled string).
+- Circular imports between `routes/` and `services/`: keep the dependency direction one-way (routers import services, never the reverse).
 - `response_model` silently drops fields not declared on the schema — if a field isn't showing up in the response, check the schema first before debugging the DB layer.

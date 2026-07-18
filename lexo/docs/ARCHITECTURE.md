@@ -25,16 +25,16 @@ flowchart LR
     Gemini[Google Gemini<br/>extract / analyze / OCR]
     Exa[Exa<br/>legal grounding]
     Eleven[ElevenLabs<br/>TTS, optional]
-    Wispr[Wispr Flow / STT<br/>optional]
+    WebSpeech[Browser Web Speech<br/>STT client-side]
 
     User -->|HTTPS| FE
     FE -->|REST/JSON| BE
+    FE -->|mic → transcript| WebSpeech
     BE --> DB
     BE --> Blob
     BE --> Gemini
     BE --> Exa
     BE -.-> Eleven
-    BE -.-> Wispr
 ```
 
 Backend is the only component that talks to Postgres, object storage, Gemini, and Exa — the frontend only ever calls the backend's REST API.
@@ -59,7 +59,7 @@ Backend is the only component that talks to Postgres, object storage, Gemini, an
 - **Exa** — legal grounding only: retrieves real sources for citations; never asked to generate a legal conclusion.
 - **Postgres (Neon Serverless)** — structured data: users, documents, reports, flags, citations, missing clauses, action items, refresh tokens. FE/BE host on Render; DB is Neon.
 - **Object storage (S3-compatible)** — raw uploaded files, accessed only via the backend (short-lived signed URLs), never exposed directly to the client.
-- **Voice (optional)** — ElevenLabs for text-to-speech; Wispr Flow (or a fallback) for speech-to-text. See below.
+- **Voice (optional)** — ElevenLabs for text-to-speech; browser Web Speech API for speech-to-text (client-side). See below.
 
 ## Cross-cutting concerns
 
@@ -70,9 +70,9 @@ Backend is the only component that talks to Postgres, object storage, Gemini, an
 
 ## Optional voice path
 
-Voice is additive and sits alongside the core upload → analyze → report path; it does not replace it. ElevenLabs can speak a report summary back to the user (text-to-speech). Spoken follow-up questions are transcribed (speech-to-text) and answered by Gemini, grounded only in the already-analyzed document and its existing citations.
+Voice is additive and sits alongside the core upload → analyze → report path; it does not replace it. ElevenLabs can speak a report summary back to the user (text-to-speech). Spoken follow-up questions are transcribed **in the browser** via the Web Speech API (or typed); the frontend sends **text** to the backend; Gemini answers grounded only in the already-analyzed document and its existing citations.
 
-**Caveat:** Wispr Flow's availability as a server-callable STT API is unconfirmed. The `/api/voice/*` contract is designed against a generic STT interface so it can be backed by Wispr Flow if it exposes a usable API, or a fallback (e.g. browser-based speech recognition) otherwise.
+**STT decision (TKT-027):** Wispr Flow is not used. No server-side STT. `POST /api/voice/transcribe` returns 501 and documents the client-side path. Chrome is the demo browser.
 
 ## Out of scope for this doc
 

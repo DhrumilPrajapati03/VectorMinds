@@ -39,7 +39,7 @@ TKT-001 → TKT-002 → TKT-003 → TKT-004 → TKT-006 → TKT-007 → TKT-008 
 | **1 — Foundation** | A judge can sign up, log in, upload a PDF/DOCX with a chosen doc type, and see it appear in the dashboard with a status. No analysis yet. |
 | **2 — Core analysis** | Same flow, plus clicking "Analyze" shows visible stage progress and lands on a full report page (risk badge, flags, missing clauses, action items, disclaimer). No citations yet. |
 | **3 — Grounding** | The report now shows each flag/missing-clause citation visibly marked **verified** (real, linked source) or **unverified** ("general principle") — the anti-hallucination story is demoable. |
-| **4 — Voice** *(optional/P1, see §6 OQ-1)* | From the report, a judge can play an audio summary and ask one spoken follow-up question, getting a grounded spoken/text answer — via Wispr Flow or a browser-based fallback. |
+| **4 — Voice** *(optional/P1; STT = Web Speech per TKT-027)* | From the report, a judge can play an audio summary and ask one spoken (or typed) follow-up question via browser Web Speech API, getting a grounded spoken/text answer. Chrome is the demo browser. |
 | **5 — Deployment & hardening** | The full flow works on the deployed Render URL, rate limits are active, deleting a document fully removes it, and `/health` + README reflect how to actually run the project. |
 
 ## 5. Ticket Index
@@ -72,12 +72,12 @@ TKT-001 → TKT-002 → TKT-003 → TKT-004 → TKT-006 → TKT-007 → TKT-008 
 | TKT-024 | Wire grounding into pipeline + persist citations | 3 | backend | P0 | TKT-023, TKT-016 |
 | TKT-025 | Citation UI: verified/unverified badges | 3 | frontend | P0 | TKT-020, TKT-024 |
 | TKT-026 | **Phase 3 demo checkpoint** | 3 | fullstack | P0 | TKT-023…025 |
-| TKT-027 | [Spike] Wispr Flow server-callable STT feasibility (OQ-1) | 4 | docs | P0 (blocker) | none |
+| TKT-027 | [Spike] STT path decision — Web Speech, not Wispr (OQ-1) | 4 | docs | P0 (done) | none |
 | TKT-028 | TTS backend: ElevenLabs `speak` endpoint | 4 | backend | P1 | TKT-017 |
-| TKT-029 | STT backend: `transcribe` endpoint (Wispr/fallback) | 4 | backend | P1 | TKT-027 |
+| TKT-029 | STT backend: `transcribe` — skipped / 501 contract | 4 | backend | P1 | TKT-027 |
 | TKT-030 | Voice Q&A backend: Gemini grounded answer | 4 | backend | P1 | TKT-024, TKT-015 |
 | TKT-031 | Audio summary playback UI | 4 | frontend | P1 | TKT-028, TKT-020 |
-| TKT-032 | Voice Q&A UX (mic + Web Speech fallback) | 4 | frontend | P1 | TKT-029, TKT-030 |
+| TKT-032 | Voice Q&A UX (Web Speech mic + typed fallback) | 4 | frontend | P1 | TKT-030, TKT-020 |
 | TKT-033 | **Phase 4 demo checkpoint** (optional) | 4 | fullstack | P1 | TKT-028…032 |
 | TKT-034 | Render deployment | 5 | infra | P0 | TKT-022 |
 | TKT-035 | [Decision] Rate-limit thresholds (OQ-3) | 5 | docs | P1 | none |
@@ -703,22 +703,28 @@ TKT-001 → TKT-002 → TKT-003 → TKT-004 → TKT-006 → TKT-007 → TKT-008 
 
 ### Phase 4 — Voice
 
-### TKT-027 — [Spike] Wispr Flow server-callable STT feasibility (OQ-1)
+### TKT-027 — [Spike] STT path decision — Web Speech, not Wispr (OQ-1)
 | Field | Value |
 |---|---|
 | Phase | 4 |
 | Surface | docs |
-| Priority | P0 (blocker) |
+| Priority | P0 (done) |
 | Depends on | none |
-| Demo value | None — unblocks/redirects TKT-029, TKT-032. |
+| Demo value | None — locks STT for TKT-029/032; Chrome is the demo browser. |
 
 **Scope:**
-- Research whether Wispr Flow exposes a server-callable STT API (vs. desktop-only dictation). Record the finding and the go/no-go decision for downstream tickets.
+- Decide the speech-to-text path for voice Q&A (PRD OQ-1 / FR-24/FR-26). Record go/no-go for server-side Wispr vs client-side Web Speech.
+
+**Decision (recorded):**
+- **Wispr Flow is NOT used.**
+- **Speech-to-text = browser Web Speech API** (`SpeechRecognition` / `webkitSpeechRecognition`) on the frontend.
+- **No `WISPR_API_KEY` required.** No server-side STT. No `POST /api/voice/transcribe` implementation.
+- User may also **type** the question. **Chrome** is the demo browser.
 
 **Acceptance criteria:**
-- [ ] Decision recorded: either "Wispr Flow is usable server-side" or "fallback to browser Web Speech API is required."
+- [x] Decision recorded: Wispr Flow is not used; browser Web Speech API is the primary STT path; server-side transcribe is unsupported (501 contract).
 
-**Notes / risks:** `SYSTEM_DESIGN.md` §11 already flags this as unconfirmed. TKT-029/030/032 branch on this outcome — do not start them until this is resolved.
+**Notes / risks:** Downstream: TKT-029 documents the 501 contract only; TKT-032 implements mic + typed fallback → text to Q&A (`POST /api/voice/ask`, TKT-030). Do not build the full report mic UI until `/reports/[id]` exists (after TKT-020).
 
 ---
 
@@ -735,30 +741,31 @@ TKT-001 → TKT-002 → TKT-003 → TKT-004 → TKT-006 → TKT-007 → TKT-008 
 - `services/voice.py` (TTS half) + real `routes/voice.py`: `POST /api/voice/speak` — text in (report summary), audio out via ElevenLabs.
 
 **Acceptance criteria:**
-- [ ] `POST /api/voice/speak` with a report summary returns playable audio.
-- [ ] `ELEVENLABS_API_KEY` is read from `settings`, never exposed to the client.
+- [x] `POST /api/voice/speak` with a report summary returns playable audio.
+- [x] `ELEVENLABS_API_KEY` is read from `settings`, never exposed to the client.
 
 **Maps to:** FR-23
 
 ---
 
-### TKT-029 — STT backend: `transcribe` endpoint
+### TKT-029 — STT backend: `transcribe` — skipped / 501 contract
 | Field | Value |
 |---|---|
 | Phase | 4 |
 | Surface | backend |
 | Priority | P1 |
 | Depends on | TKT-027 |
-| Demo value | Depends on TKT-027's finding — either real Wispr transcription or an explicit "use the frontend fallback" contract. |
+| Demo value | Explicit contract: server-side STT is unsupported; frontend Web Speech is primary. |
 
 **Scope:**
-- `services/voice.py` (STT half) + `POST /api/voice/transcribe` — backed by Wispr Flow if TKT-027 found it usable; otherwise this ticket documents the endpoint as unsupported server-side, with the fallback moving entirely client-side (TKT-032).
+- **Skipped / unsupported server-side** per TKT-027. Do **not** implement a Wispr (or any) STT client.
+- Keep `POST /api/voice/transcribe` as an explicit **501** with `detail` explaining that client-side Web Speech is used (TKT-032). No silent failure / no fake success.
+- Frontend Web Speech is the **primary** STT path; this endpoint is not part of the demo flow.
 
 **Acceptance criteria:**
-- [ ] If Wispr is usable: audio in → transcript out via Wispr Flow.
-- [ ] If not usable: the endpoint/contract explicitly documents itself as unsupported, and the frontend fallback (TKT-032) is the primary path — no silent failure.
+- [x] Endpoint/contract explicitly documents itself as unsupported (501); frontend Web Speech (TKT-032) is the primary path — no Wispr integration.
 
-**Maps to:** FR-24, FR-26
+**Maps to:** FR-24, FR-26 (satisfied via client-side Web Speech, not server STT)
 
 ---
 
@@ -773,10 +780,12 @@ TKT-001 → TKT-002 → TKT-003 → TKT-004 → TKT-006 → TKT-007 → TKT-008 
 
 **Scope:**
 - `llm.py` addition: `answer_question(document_context, report, citations, question)`, constrained to only the analyzed document + existing report/citations, introducing no new claims.
+- Expose via `POST /api/voice/ask` — **text question in** (from Web Speech or typed UI in TKT-032); no audio upload.
 
 **Acceptance criteria:**
-- [ ] Given a question outside the report's scope, the answer explicitly declines to introduce new legal claims rather than inventing one.
-- [ ] The answer references only citations already present in the report.
+- [x] Given a question outside the report's scope, the answer explicitly declines to introduce new legal claims rather than inventing one.
+- [x] The answer references only citations already present in the report.
+- [x] `POST /api/voice/ask` accepts text only (STT remains client-side per TKT-027).
 
 **Maps to:** FR-25
 
@@ -801,21 +810,23 @@ TKT-001 → TKT-002 → TKT-003 → TKT-004 → TKT-006 → TKT-007 → TKT-008 
 
 ---
 
-### TKT-032 — Voice Q&A UX (mic + Web Speech fallback)
+### TKT-032 — Voice Q&A UX (Web Speech mic + typed fallback)
 | Field | Value |
 |---|---|
 | Phase | 4 |
 | Surface | frontend |
 | Priority | P1 |
-| Depends on | TKT-029, TKT-030 |
-| Demo value | A judge can ask a spoken question and get a spoken/text answer, regardless of Wispr availability. |
+| Depends on | TKT-030, TKT-020 |
+| Demo value | A judge can ask a spoken or typed question on the report page and get a grounded spoken/text answer (Chrome). |
 
 **Scope:**
-- Mic button on the report page. If TKT-027 found Wispr unusable, use the browser Web Speech API client-side to capture the question instead of calling `/api/voice/transcribe`; send the transcript to the Q&A path from TKT-030 and display the grounded answer (optionally replayed via TKT-028).
+- Mic + typed question on `/reports/[id]` (only after the report page exists — **do not build full mic UI before TKT-020**).
+- **STT:** browser Web Speech API only — do not call `/api/voice/transcribe`.
+- **TODO (implementation):** `Use window.SpeechRecognition || window.webkitSpeechRecognition; onresult → set question text; submit to /api/voice/ask` (TKT-030). User may also type the question. Display the grounded answer (optionally replay via TKT-028).
 
 **Acceptance criteria:**
-- [ ] User can ask a question by voice (via the Wispr-backed endpoint or the Web Speech fallback) and see/hear a grounded answer.
-- [ ] If the primary STT provider is unavailable, the fallback path still lets the user submit a spoken question.
+- [ ] User can ask a question by voice (Web Speech) or by typing, and see/hear a grounded answer from `/api/voice/ask`.
+- [ ] No dependency on Wispr or server-side STT; Chrome is the demo browser.
 
 **Maps to:** FR-24, FR-26
 
@@ -828,12 +839,12 @@ TKT-001 → TKT-002 → TKT-003 → TKT-004 → TKT-006 → TKT-007 → TKT-008 
 | Surface | fullstack |
 | Priority | P1 |
 | Depends on | TKT-028…TKT-032 |
-| Demo value | Voice in/out is demoable, on whichever STT path TKT-027 resolved to. |
+| Demo value | Voice in/out is demoable via ElevenLabs TTS + browser Web Speech STT (TKT-027). |
 
 **Acceptance criteria:**
-- [ ] A judge can listen to a report summary and ask one spoken question, getting a grounded answer.
+- [ ] A judge can listen to a report summary and ask one spoken (or typed) question, getting a grounded answer.
 
-**Notes / risks:** this entire phase is P1/optional for the main demo path — if `TKT-027` resolves unfavorably late, the fallback-only path (Web Speech + text answer) still satisfies FR-24/FR-26 without a working Wispr integration.
+**Notes / risks:** this entire phase is P1/optional for the main demo path. STT is client-side Web Speech only (no Wispr); typed questions remain a valid path if mic/browser support is limited.
 
 ### Phase 5 — Deployment & hardening
 
@@ -889,7 +900,7 @@ TKT-001 → TKT-002 → TKT-003 → TKT-004 → TKT-006 → TKT-007 → TKT-008 
 - Per-user rate limit (in-memory or simple DB-backed counter — no Redis) on `POST /api/upload` and `POST /api/analyze/{document_id}` using TKT-035's thresholds.
 
 **Acceptance criteria:**
-- [ ] Exceeding the threshold returns a clear 429 with a user-facing message, not a raw exception.
+- [x] Exceeding the threshold returns a clear 429 with a user-facing message, not a raw exception.
 
 ---
 
@@ -907,9 +918,9 @@ TKT-001 → TKT-002 → TKT-003 → TKT-004 → TKT-006 → TKT-007 → TKT-008 
 - Dashboard delete button + confirmation.
 
 **Acceptance criteria:**
-- [ ] Deleting a document removes it from the dashboard immediately.
-- [ ] A subsequent `GET /api/documents/{id}` or `GET /api/reports/{id}` returns 404 after delete.
-- [ ] The underlying blob is removed from object storage.
+- [ ] Deleting a document removes it from the dashboard immediately. *(frontend half still open)*
+- [x] A subsequent `GET /api/documents/{id}` or `GET /api/reports/{id}` returns 404 after delete. *(backend)*
+- [x] The underlying blob is removed from object storage. *(backend local-disk)*
 
 **Maps to:** FR-29
 
@@ -1035,7 +1046,7 @@ TKT-001 → TKT-002 → TKT-003 → TKT-004 → TKT-006 → TKT-007 → TKT-008 
 
 | ID | Open question | Ticket | Blocks |
 |---|---|---|---|
-| OQ-1 | Does Wispr Flow expose a server-callable STT API? | TKT-027 | Phase 4 |
+| OQ-1 | Does Wispr Flow expose a server-callable STT API? | TKT-027 — **resolved: no Wispr; use browser Web Speech API; no server STT** | Phase 4 (unblocked) |
 | OQ-2 | Is "Lexo" or "VectorMinds" the canonical name? | TKT-041 | Branding only, not a build blocker |
 | OQ-3 | Concrete rate-limit thresholds for upload/analyze? | TKT-035 | Phase 5 |
 | OQ-4 | Target accessibility conformance level? | TKT-040 | Phase 5 / ongoing |

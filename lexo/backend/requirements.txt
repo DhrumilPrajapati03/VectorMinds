@@ -11,4 +11,6 @@ passlib[bcrypt]
 bcrypt<4.1
 google-generativeai
 pdfplumber
+pypdfium2
 python-docx
+httpx

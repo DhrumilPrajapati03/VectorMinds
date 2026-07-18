@@ -5,7 +5,7 @@ from db import get_session
 from models.schemas import UploadResponse
 from models.tables import User
 from services import document_service
-from services.auth_service import get_current_user
+from services.rate_limit import enforce_upload_rate_limit
 
 router = APIRouter(tags=["upload"])
 
@@ -15,7 +15,7 @@ async def upload(
     file: UploadFile = File(...),
     doc_type: str = Form(...),
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(enforce_upload_rate_limit),
 ):
     data = await file.read()
     return document_service.create_document(

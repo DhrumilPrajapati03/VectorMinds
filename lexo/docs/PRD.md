@@ -275,7 +275,7 @@ No live usage exists yet, so these are MVP-realistic proxy metrics intended for 
 
 | # | Question | Blocks |
 |---|---|---|
-| OQ-1 | Does Wispr Flow expose a server-callable STT API, or must Lexo rely on a fallback (e.g. browser Web Speech API) for voice input? Flagged explicitly in `SYSTEM_DESIGN.md` §11 as unconfirmed. | Phase 4 (Voice) |
+| OQ-1 | Does Wispr Flow expose a server-callable STT API, or must Lexo rely on a fallback (e.g. browser Web Speech API) for voice input? | **Resolved (TKT-027):** Wispr unused; STT = browser Web Speech API; backend receives text questions only. Chrome = demo browser. Goals FR-24/FR-26 unchanged. |
 | OQ-2 | The root [`README.md`](../../README.md) names the project "VectorMinds," while all product docs and code refer to "Lexo." Which name is canonical — is a rename needed, or is "VectorMinds" an unrelated/legacy artifact? | Branding consistency, not a build blocker |
 | OQ-3 | What are the concrete rate-limit thresholds for upload/analyze endpoints (requests per user per time window)? | Phase 5 (hardening) |
 | OQ-4 | What accessibility conformance level (e.g. WCAG AA) is targeted beyond voice in/out? | Phase 5 (hardening) / ongoing frontend work |

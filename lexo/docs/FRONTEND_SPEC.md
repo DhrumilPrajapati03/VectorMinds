@@ -38,7 +38,7 @@ This doc assumes the reader has skimmed `PRD.md` §6 (journeys) and `SYSTEM_DESI
 | `/dashboard` | Yes | Lists the user's documents/reports with status + risk badge; entry point to upload | `GET /api/documents`, `DELETE /api/documents/{id}` |
 | `/upload` | Yes | Select `doc_type`, choose/drag-and-drop a file, submit | `POST /api/upload`, `POST /api/analyze/{document_id}` |
 | `/documents/[id]` | Yes | Shows processing status while a document is being analyzed | `GET /api/documents/{id}` (polled) |
-| `/reports/[id]` | Yes | Full report: risk badge, flags/citations, missing clauses, action items, disclaimer, voice entry points | `GET /api/reports/{id}`, `POST /api/voice/speak`, `POST /api/voice/transcribe` |
+| `/reports/[id]` | Yes | Full report: risk badge, flags/citations, missing clauses, action items, disclaimer, voice entry points | `GET /api/reports/{id}`, `POST /api/voice/speak`, `POST /api/voice/ask` (text); STT is client-side Web Speech — do not call `/api/voice/transcribe` |
 
 No routes or endpoints beyond this table are assumed anywhere in this doc.
 
@@ -183,7 +183,7 @@ No routes or endpoints beyond this table are assumed anywhere in this doc.
 
 **User actions:** read the report; expand/inspect individual flags and citations; play the audio summary; ask a spoken question (voice controls — see §8 for MVP-phasing gating); navigate back to `/dashboard`.
 
-**API calls:** `GET /api/reports/{id}` on mount; `POST /api/voice/speak` on "Listen to summary"; `POST /api/voice/transcribe` on submitting a spoken question.
+**API calls:** `GET /api/reports/{id}` on mount; `POST /api/voice/speak` on "Listen to summary"; `POST /api/voice/ask` with the **text** question (from Web Speech transcript or typed input). Do not call `/api/voice/transcribe`.
 
 **States:**
 | State | Behavior |
@@ -215,8 +215,9 @@ No routes or endpoints beyond this table are assumed anywhere in this doc.
 Per `SYSTEM_DESIGN.md` §10, voice is **Phase 4** — later than the core upload → analyze → report path (Phases 1–3). This section describes the target UI; whether it is hidden, disabled, or simply not yet built is an MVP-scope decision left to §12.
 
 - **"Listen to summary":** a play control on `/reports/[id]` that calls `POST /api/voice/speak` with the report summary text and plays the returned audio via a standard HTML5 `<audio>`-backed player (play/pause, progress). No transcript-editing or scrubbing-heavy player is needed.
-- **Voice Q&A ("ask"):** a mic button that starts/stops recording, calls `POST /api/voice/transcribe` with the captured audio, shows the resulting transcript, and displays the grounded answer (text, and optionally spoken via the same `speak` flow). The UI must not imply the answer does new legal research — it is explicitly grounded only in the existing report and its citations (PRD §6.5, FR-25); no "searching the web" or "consulting a lawyer" language or imagery should appear anywhere in this flow.
-- **STT fallback:** `SYSTEM_DESIGN.md` §11 and PRD OQ-1 flag that Wispr Flow's server-callable STT availability is unconfirmed. This spec does not invent a fallback UI (e.g. browser Web Speech API) beyond noting it as the FR-26 candidate — see §14 Open Questions.
+- **Voice Q&A ("ask"):** mic via **browser Web Speech API** plus a typed-question field. Chrome is the demo browser. Do **not** call `/api/voice/transcribe` (501 / unused). Show the transcript (or typed text), submit to `POST /api/voice/ask`, and display the grounded answer (text, and optionally spoken via the same `speak` flow). The UI must not imply the answer does new legal research — it is explicitly grounded only in the existing report and its citations (PRD §6.5, FR-25); no "searching the web" or "consulting a lawyer" language or imagery should appear anywhere in this flow.
+- **TODO (TKT-032 — implement only after `/reports/[id]` exists):** `Use window.SpeechRecognition || window.webkitSpeechRecognition; onresult → set question text; submit to /api/voice/ask`. Full mic UI waits until the report page exists (TKT-020).
+- **STT decision (TKT-027 / FE-OQ-1 resolved):** Wispr is not used; Web Speech is the primary (only) STT path; typed input is always available.
 
 ## 9. Component Inventory
 
@@ -289,7 +290,7 @@ Carried forward from `PRD.md` §14 plus frontend-specific gaps identified while 
 
 | # | Question | Affects |
 |---|---|---|
-| FE-OQ-1 (= PRD OQ-1) | Does Wispr Flow expose a server-callable STT API, or does the frontend need a browser-based fallback (e.g. Web Speech API) for the mic Q&A control? | §8 Voice UI, Phase 4 |
+| FE-OQ-1 (= PRD OQ-1) | **Resolved (TKT-027):** no Wispr; mic uses browser Web Speech API; typed fallback; submit text to `/api/voice/ask`. | §8 Voice UI, Phase 4 |
 | FE-OQ-2 (= PRD OQ-4) | What accessibility conformance level (e.g. WCAG AA) is targeted? | §11 Responsive & Accessibility |
 | FE-OQ-3 (= PRD OQ-6) | Is password reset UI required for MVP `/login`, or deferred? | §6.1 `/login` |
 | FE-OQ-4 | What is the exact file size limit (and copy) to show on upload rejection? | §6.4 `/upload` |
