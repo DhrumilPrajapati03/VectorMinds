@@ -2,5 +2,13 @@ fastapi
 uvicorn
 python-multipart
 pydantic
+pydantic-settings
 python-dotenv
 psycopg2-binary
+sqlmodel
+pyjwt
+passlib[bcrypt]
+bcrypt<4.1
+google-generativeai
+pdfplumber
+python-docx

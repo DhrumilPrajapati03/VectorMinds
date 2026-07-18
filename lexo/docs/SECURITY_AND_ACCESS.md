@@ -25,7 +25,7 @@ flowchart LR
     User[User Browser]
     FE[Next.js Frontend]
     BE[FastAPI Backend]
-    DB[(Postgres)]
+    DB[(Postgres<br/>Neon Serverless)]
     Blob[(Object Storage)]
     Gemini[Google Gemini]
     Exa[Exa API]
@@ -120,7 +120,7 @@ Compact view; full method/path/purpose detail lives in `SYSTEM_DESIGN.md` §6 �
 
 - **In transit:** all traffic is served over HTTPS; Render terminates TLS at the edge for both the frontend and backend web services (`SYSTEM_DESIGN.md` §7, §8). No endpoint should be reachable over plain HTTP in production.
 - **At rest:**
-  - Postgres (Render managed) holds all structured data, including `password_hash` and `token_hash` — never plaintext passwords or plaintext refresh tokens.
+  - Postgres (Neon Serverless) holds all structured data, including `password_hash` and `token_hash` — never plaintext passwords or plaintext refresh tokens.
   - Object storage uses server-side encryption (SSE) for raw uploaded files (`SYSTEM_DESIGN.md` §3.3).
 - **Blob access pattern:** the backend never returns a raw storage URL to the client. If the client needs direct access to a file, the backend issues a short-lived signed URL; by default, file bytes flow through the backend, not a client-facing bucket URL.
 - **Logging redaction policy:** logs must never contain passwords (plaintext or hashed), access/refresh tokens, or full uploaded-document text. Log identifiers (`user_id`, `document_id`, event type, status) instead of payload content. This is a policy statement for implementers to enforce with each new log line, not an automated scanner requirement for MVP.

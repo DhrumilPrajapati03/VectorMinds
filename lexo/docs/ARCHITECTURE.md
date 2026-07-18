@@ -20,7 +20,7 @@ flowchart LR
     User[User Browser]
     FE[Next.js Frontend]
     BE[FastAPI Backend]
-    DB[(Postgres)]
+    DB[(Postgres<br/>Neon Serverless)]
     Blob[(Object Storage<br/>S3-compatible)]
     Gemini[Google Gemini<br/>extract / analyze / OCR]
     Exa[Exa<br/>legal grounding]
@@ -57,7 +57,7 @@ Backend is the only component that talks to Postgres, object storage, Gemini, an
 - **Backend** (`lexo/backend`, FastAPI) — orchestrates the pipeline above; the only component with credentials to Postgres, object storage, Gemini, and Exa.
 - **Google Gemini** — text/document understanding: extraction (incl. OCR of scanned pages via multimodal input), clause segmentation, risk analysis, missing-clause detection, voice Q&A answering.
 - **Exa** — legal grounding only: retrieves real sources for citations; never asked to generate a legal conclusion.
-- **Postgres** — structured data: users, documents, reports, flags, citations, missing clauses, action items.
+- **Postgres (Neon Serverless)** — structured data: users, documents, reports, flags, citations, missing clauses, action items, refresh tokens. FE/BE host on Render; DB is Neon.
 - **Object storage (S3-compatible)** — raw uploaded files, accessed only via the backend (short-lived signed URLs), never exposed directly to the client.
 - **Voice (optional)** — ElevenLabs for text-to-speech; Wispr Flow (or a fallback) for speech-to-text. See below.
 
